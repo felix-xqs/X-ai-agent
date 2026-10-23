@@ -1,4 +1,4 @@
-"""Manual, offline content planning and simulated publication. GPL-3.0-or-later."""
+"""Manual content planning and simulated publication. GPL-3.0-or-later."""
 
 import argparse
 from datetime import datetime, timedelta, timezone
@@ -9,8 +9,12 @@ import sqlite3
 import unicodedata
 
 
-class PlannerError(ValueError):
-    pass
+if __package__:
+    from .errors import PlannerError
+    from .providers import OpenAICompatibleProvider, validate_model_config, validate_texts
+else:
+    from errors import PlannerError
+    from providers import OpenAICompatibleProvider, validate_model_config, validate_texts
 
 
 def utcnow():
@@ -69,14 +73,19 @@ class MockProvider:
         return [item.format(t=topic) for item in templates[language][style][:count]]
 
 
-def prepare(config, now=None):
+def validate_config(config, now=None):
     if not isinstance(config, dict):
         raise PlannerError("Configuration must be a JSON object.")
-    allowed = {"topic", "language", "style", "count", "start_at", "interval_minutes", "provider"}
+    allowed = {"topic", "language", "style", "count", "start_at", "interval_minutes", "provider", "model_config"}
     if set(config) - allowed:
         raise PlannerError("Unknown configuration fields; credentials and publishing settings are not accepted.")
-    if config.get("provider", "mock") != "mock":
-        raise PlannerError("Only the offline mock provider is available.")
+    provider = config.get("provider", "mock")
+    if provider not in ("mock", "openai-compatible"):
+        raise PlannerError("provider must be mock or openai-compatible.")
+    if provider == "openai-compatible":
+        validate_model_config(config.get("model_config"))
+    elif "model_config" in config:
+        raise PlannerError("model_config is accepted only with provider openai-compatible.")
     topic = config.get("topic")
     if not isinstance(topic, str) or not topic.strip() or len(topic.strip()) > 120:
         raise PlannerError("topic must contain 1–120 characters.")
@@ -90,7 +99,16 @@ def prepare(config, now=None):
     if type(interval) is not int or not 1 <= interval <= 525600:
         raise PlannerError("interval_minutes must be an integer from 1 to 525600.")
     start = timestamp(config["start_at"]) if "start_at" in config else (now or utcnow())
-    texts = MockProvider().generate(topic, language, style, count)
+    # Validate schedule overflow before any model request.
+    start + timedelta(minutes=(count - 1) * interval)
+    return topic, language, style, count, start, interval
+
+
+def prepare(config, now=None):
+    topic, language, style, count, start, interval = validate_config(config, now)
+    provider = (OpenAICompatibleProvider(config["model_config"])
+                if config.get("provider", "mock") == "openai-compatible" else MockProvider())
+    texts = validate_texts(provider.generate(topic, language, style, count), count)
     return [dict(text=text, fingerprint=fingerprint(text), topic=topic,
                  language=language, style=style, scheduled_at=iso(start + timedelta(minutes=i * interval)))
             for i, text in enumerate(texts)]
@@ -154,7 +172,12 @@ class Queue:
         return self.db.execute("SELECT value FROM settings WHERE key='paused'").fetchone()[0] == "true"
 
     def plan(self, config):
-        posts = prepare(config)
+        try:
+            posts = prepare(config)
+        except PlannerError as error:
+            with self.db:
+                self.event("generation_failed", detail=str(error))
+            raise
         added, duplicates = [], 0
         with self.db:
             for post in posts:
@@ -224,10 +247,10 @@ class Queue:
 
 
 def main(argv=None):
-    parser = argparse.ArgumentParser(description="Offline original-content planner; never connects to X.")
+    parser = argparse.ArgumentParser(description="Content planner; mock by default, opt-in model generation, never connects to X.")
     parser.add_argument("--db", default=".local/planner.sqlite3", help="local SQLite queue file")
     commands = parser.add_subparsers(dest="command", required=True)
-    plan = commands.add_parser("plan", help="generate deterministic mock drafts and enqueue")
+    plan = commands.add_parser("plan", help="generate and validate drafts using the configured provider, then enqueue")
     plan.add_argument("--config", required=True)
     run = commands.add_parser("dry-run", help="simulate due posts once; then exit")
     run.add_argument("--at", help="override simulation clock (ISO 8601 with offset)")
@@ -242,7 +265,7 @@ def main(argv=None):
         config = None
         if args.command == "plan":
             config = json.loads(Path(args.config).read_text(encoding="utf-8"))
-            prepare(config)  # Validate the entire batch before opening the database.
+            validate_config(config)  # No generation or credential reads during preflight.
         now = timestamp(args.at) if args.command == "dry-run" and args.at else None
         path = Path(args.db)
         path.parent.mkdir(parents=True, exist_ok=True)

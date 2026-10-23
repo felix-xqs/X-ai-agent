@@ -1,4 +1,4 @@
-"""Offline planner entry point. No HTTP server, browser, credentials or daemon."""
+"""Planner entry point (mock default, optional model generation). No HTTP server, browser or daemon."""
 
 if __package__:
     from .planner import main

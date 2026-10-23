@@ -1,1 +1,1 @@
-"""Original-content dry-run prototype (Python standard library only)."""
+"""Original-content planner and dry-run prototype (Python standard library only)."""

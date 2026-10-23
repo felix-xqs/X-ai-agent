@@ -17,3 +17,9 @@ background scheduler are implemented or enabled.
 The upstream root license heading and body name inconsistent GPL versions; its
 wording is preserved. New Python prototype code follows GPL-3.0-or-later, as stated
 in the original license body. The client retains its separate MIT notice.
+
+Additional modification on 2026-10-23: added an opt-in OpenAI-compatible text
+Chat Completions provider with validated configuration, bounded requests/responses,
+credential-safe errors, strict draft validation, mocked transport tests and a model
+configuration example. Mock generation remains the default; X interactions and
+background execution remain disabled. No real model calls were made in development.

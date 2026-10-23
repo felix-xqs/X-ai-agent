@@ -1,2 +1,2 @@
-# No third-party packages required for the offline prototype (Python 3.9+).
+# No third-party packages required for the planner, including optional model HTTP calls (Python 3.9+).
 # Do not install upstream browser-automation dependencies for this version.

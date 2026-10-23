@@ -1,9 +1,11 @@
-# Original-content planner: offline first version
+# Original-content planner: mock default, optional model generation
 
 Fork of [hireshBrem/X-ai-agent](https://github.com/hireshBrem/X-ai-agent).
 This version replaces the automatic-reply demo with a **manual local planner and
-simulated publication queue**. It never connects to X. No credentials, cookies,
-API keys, Browserbase account, package installation or background service are needed.
+simulated publication queue**. It never connects to X. Mock mode is the default
+and needs no secrets or network. Optional `openai-compatible` mode sends one request
+to a model endpoint you configure. Neither mode enables real publication. No package
+installation, Browserbase account, X credentials, cookies or background service are needed.
 
 ## Run on this Mac
 
@@ -43,14 +45,94 @@ Copy and edit `planner.example.json`:
 | `count` | 1–3 drafts (default 3) |
 | `start_at` | ISO 8601 timestamp with offset, e.g. `2030-01-01T09:00:00+08:00`; defaults to now |
 | `interval_minutes` | Integer 1–525600 (default 60) |
-| `provider` | `mock` only |
+| `provider` | `mock` (default) or `openai-compatible` |
+| `model_config` | Required only for `openai-compatible`; fields below |
 
 The mock provider uses deterministic original templates; it does not retrieve or
 copy posts, call an LLM, fact-check claims, or guarantee novel wording. It is meant
 for validating the workflow. Changing language and style changes the templates.
-Unknown configuration fields are rejected, including credentials or live publishing
-settings. All timestamps are stored in UTC. Stored drafts retain their config and
-schedule even if you later edit the JSON file.
+Unknown configuration fields are rejected, including inline credentials or live publishing
+settings. All timestamps are stored in UTC. Stored drafts retain their topic,
+language, style and schedule even if you later edit the JSON file; model settings
+and the API key are not persisted.
+
+## Custom model integration (optional, no real endpoint tested)
+
+`planner.example.json` remains fully offline. For future model use, copy
+`planner.model.example.json` to your own local configuration and change the Base URL
+and model name. Its `.invalid` domain is a deliberate placeholder, not a working
+service. Configure the named environment variable privately on your own machine;
+do not paste a key into chat or put it in the JSON, CLI arguments or repository.
+This implementation was validated **only with mocked HTTP and synthetic keys**;
+no real credentials were read and no real model requests were made during development.
+
+| `model_config` field | Meaning / bounds |
+| --- | --- |
+| `base_url` | API base including the version path, e.g. `https://your-host/v1`; appends `/chat/completions` |
+| `model` | Your endpoint's chat model name, 1–200 characters |
+| `api_key_env` | Environment-variable **name** to read only when generating; its value becomes the Bearer header |
+| `timeout_seconds` | Socket/connect/read inactivity timeout, 1–120 seconds, default 30 |
+| `max_tokens` | Output-token limit, integer 64–4096, default 1024 |
+| `token_parameter` | Sends the limit as `max_tokens` (default) or `max_completion_tokens` |
+| `temperature` | 0–2, default 0.7; `null` omits the parameter if the model does not support it |
+
+Once you independently configure a compatible endpoint and its environment variable,
+these commands use it (they were **not** run against a real service here):
+
+```bash
+python3 -m server --db .local/model.sqlite3 plan --config .local/my-model.json
+python3 -m server --db .local/model.sqlite3 status
+python3 -m server --db .local/model.sqlite3 dry-run --at 2030-01-02T00:00:00Z
+```
+
+Only `plan` in explicit model mode can call the endpoint. Preflight validates without
+generation; a valid `plan` makes exactly one request, with no automatic retry or
+fallback to mock. Topic, language, style and count are sent; the API key is sent only
+as Authorization. Scheduling metadata and existing queued posts are not sent.
+`dry-run`, `status`, `logs`, `pause`, `resume` and `retry` never call the model or read
+its key. Re-running `plan` in model mode makes another request before checking
+content fingerprints, so it can incur provider usage even when drafts are duplicates.
+
+The supported subset is **Bearer-authenticated, non-streaming Chat Completions**:
+`POST <base_url>/chat/completions` with system/user text messages, `n: 1`,
+`stream: false`, a bounded token field and optional temperature. It requires one
+`choices` entry with `finish_reason: "stop"`, `message.role: "assistant"` and a
+string `message.content` containing only `{"posts": ["draft", "draft"]}` with exactly
+the requested count. JSON mode/structured-output support is not required or sent.
+The prompt asks for JSON; the parser enforces the format.
+
+This does **not** imply every vendor or model works. Responses API, native Anthropic
+or Gemini APIs, Azure-specific authentication/query parameters, streaming, tools,
+multimodal content and reasoning-only output are unsupported. Some models reject
+system messages, temperature, `n` or either token field. Choose the documented token
+field and omit temperature as needed; other incompatible request formats need an
+adapter change. OpenAI's [Chat Completions reference](https://developers.openai.com/api/reference/resources/chat)
+also notes model-specific parameter support and the replacement of `max_tokens`
+with `max_completion_tokens`. No provider/model compatibility has been verified live.
+
+Safety and failure behavior:
+
+- Only HTTPS is accepted, except HTTP to `localhost`, `127.0.0.1` or `::1` for local
+  model servers. Inline URL credentials, query strings, fragments and known X domains
+  are rejected. Treat the configured endpoint as trusted: it receives the prompt and
+  Bearer key. The key is not copied into the prompt.
+- Redirects are refused and proxy environment variables are ignored. TLS verification
+  stays enabled. Custom headers, authentication schemes and certificate overrides are
+  not supported. The timeout is socket inactivity, **not a guaranteed total wall-clock
+  deadline**; a server that keeps sending data can take longer.
+- Responses are capped at 64 KiB. Non-200 status, timeouts, connection errors, refusals,
+  incomplete output, tool calls, malformed/duplicate-key JSON or invalid drafts reject
+  the entire batch before any post is inserted. A draft must be a nonempty single-line
+  string of at most 280 Unicode code points, without control/surrogate characters
+  or Unicode line separators;
+  normalized duplicates within the batch and exact key echoes are rejected. This is
+  not X's weighted character validation or semantic content moderation.
+- API keys, raw response bodies, request headers, endpoint URLs and exception details
+  are omitted from generation errors/events. Provider failures produce a sanitized
+  `generation_failed` event and exit code 2; existing posts and pause state are unchanged.
+  Inspect the endpoint configuration yourself, then invoke `plan` again if appropriate.
+  Generated drafts and queue receipts remain local plaintext. Models may still produce
+  inaccurate or inappropriate content; inspect drafts with `status` before simulation.
 
 ## Queue behavior and recovery
 
@@ -111,8 +193,11 @@ python3 -m unittest discover -s tests -v
 
 The standard-library suite covers configuration, both languages and all styles,
 timezones and due boundaries, persistent deduplication, verified receipts, errors,
-pause/resume/retry, rollback, CLI exit codes and retired browser paths. Network
-connections are blocked during queue tests. No upstream repository scripts,
+pause/resume/retry, rollback, CLI exit codes and retired browser paths. Provider tests
+inspect requests through a mocked HTTP opener, using synthetic environment values;
+they cover response validation, size limits, redaction, credential isolation, redirect
+refusal, timeouts, HTTP errors and a single request per plan. Real socket connections
+are blocked throughout both test suites. No upstream repository scripts,
 package installers or browser automation are run.
 
 ## Architecture and limitations
@@ -121,10 +206,13 @@ The source combined a Next.js 15 client with a FastAPI backend that used Browser
 Browserbase and LangChain to log in and reply. After inspecting that path, this
 prototype retains the Python server directory and replaces the execution entry
 point with a dependency-free CLI. `server/planner.py` owns validation, mock generation,
-SQLite persistence and the simulator; `tests/test_planner.py` verifies the workflow.
+SQLite persistence and the simulator; `server/providers.py` owns optional HTTP generation
+and output validation, and `server/errors.py` shares public errors. The test files verify
+both the workflow and the provider contract.
 
-This is a small workflow prototype: no graphical queue editor, real LLM provider,
-real publishing adapter, X character-weight validation, semantic deduplication,
+This is a small workflow prototype: optional model integration is unverified against
+real services; there is no graphical queue editor, real publishing adapter,
+X character-weight validation, semantic deduplication,
 content review/approval state, migrations or background scheduling. The timestamp
 is metadata for manual dry-runs. Receipts verify only local simulation consistency.
 

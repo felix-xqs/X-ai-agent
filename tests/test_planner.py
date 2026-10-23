@@ -217,7 +217,7 @@ class PlannerTests(unittest.TestCase):
                 imports.update(alias.name.split('.')[0] for alias in node.names)
             elif isinstance(node, ast.ImportFrom) and node.module:
                 imports.add(node.module.split('.')[0])
-        self.assertEqual(imports - {'argparse', 'datetime', 'hashlib', 'json', 'pathlib', 'sqlite3', 'unicodedata'}, set())
+        self.assertEqual(imports - {'argparse', 'datetime', 'hashlib', 'json', 'pathlib', 'sqlite3', 'unicodedata', 'errors', 'providers'}, set())
 
 
 if __name__ == '__main__':

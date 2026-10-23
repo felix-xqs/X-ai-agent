@@ -1,0 +1,18 @@
+{
+  "topic": "可持续的 AI 学习习惯",
+  "language": "zh",
+  "style": "practical",
+  "count": 3,
+  "start_at": "2030-01-01T09:00:00+08:00",
+  "interval_minutes": 120,
+  "provider": "openai-compatible",
+  "model_config": {
+    "base_url": "https://model-endpoint.example.invalid/v1",
+    "model": "replace-with-your-compatible-chat-model",
+    "api_key_env": "CONTENT_MODEL_API_KEY",
+    "timeout_seconds": 30,
+    "max_tokens": 1024,
+    "token_parameter": "max_tokens",
+    "temperature": 0.7
+  }
+}
