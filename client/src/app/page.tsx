@@ -1,14 +1,13 @@
-import Sidebar from '@/components/playground/Sidebar/Sidebar'
-import { ChatArea } from '@/components/playground/ChatArea'
-import { Suspense } from 'react'
-
 export default function Home() {
   return (
-    <Suspense fallback={<div>Loading...</div>}>
-      <div className="flex h-screen bg-background/80">
-        <Sidebar />
-        <ChatArea />
-      </div>
-    </Suspense>
+    <main>
+      <h1>Original-content planner — offline prototype</h1>
+      <p>The first version runs locally from the command line. X login, posting,
+        replies and browser sessions are disabled.</p>
+      <p>From the repository root:</p>
+      <pre>python3 -m server plan --config planner.example.json</pre>
+      <pre>python3 -m server status</pre>
+      <p>See README.md for scheduling, dry-run verification and pause/retry commands.</p>
+    </main>
   )
 }

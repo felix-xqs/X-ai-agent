@@ -1,170 +1,139 @@
-# X (Twitter) AI Agent
+# Original-content planner: offline first version
 
-X (Twitter) AI Agent is an AI web agent that interacts with tweets, built using [Browser Use](https://docs.browser-use.com/introduction) and [Browserbase](https://docs.browserbase.com/introduction/what-is-browserbase).
+Fork of [hireshBrem/X-ai-agent](https://github.com/hireshBrem/X-ai-agent).
+This version replaces the automatic-reply demo with a **manual local planner and
+simulated publication queue**. It never connects to X. No credentials, cookies,
+API keys, Browserbase account, package installation or background service are needed.
 
-## Demo
- 
-https://storage.googleapis.com/audio_bucket_studiaai/demo.mp4
+## Run on this Mac
 
-## Features
+Use the existing Python 3.9+ interpreter from the repository root:
 
-- 🤖 Autonomous - Auto-reply to tweets on X
-- 🌐 It's free - Literally all free tools (Browser-use and Browserbase) with limits
-- 📱 Simple-to-use UI - Even your grandma can use it lol 
-- 🔄 Observation - See your agent in action with agent browsing session playback
-
-## Architecture
-
-The project is divided into two main components:
-
-### Client
-
-A modern web application built with:
-- **Next.js 15** - React framework with server-side rendering
-- **TypeScript** - For type safety and better developer experience
-- **Tailwind CSS** - For styling and responsive design
-- **Radix UI** - Accessible UI components
-- **Zustand** - State management
-- **Framer Motion** - For animations and transitions
-
-### Server
-
-A Python backend built with:
-- **FastAPI** - High-performance web framework for building APIs
-- **Browser-use** - Library for browser automation with LLMs
-- **Browserbase** - Browser infrastructure for reliable web automation
-- **LangChain** - Framework for developing applications powered by language models
-- **Playwright** - Under-the-hood browser automation library
-
-## How It Works
-- You enter your X login credentials and click login, which creates a context (identified by the context id) for the agent to perform the login task (go to X.com and enter credentials and login). 
-- The first login step is provided in order to save login info (via cookies) for future agent tasks.
-- Next the user will click the run agent button, this will initiate an agent run (with saved context data, i.e auth) that will perform the task of commenting on a post on your For You page on X.
-- After the agent has performed the task, you will be able to view the session recording to see how the agent has performed the tasks.
-- Please note that all data (agent session data and agent context id) has been stored locally for privacy. 
-
-
-## Getting Started
-
-### Prerequisites
-
-- (free) Browserbase API key + Browserbase Project ID (Get them at https://www.browserbase.com/settings)
-- (free) OpenAI API (Get one at https://platform.openai.com/api-keys)
-
-### Installation
-
-#### Client Setup
-
-1. Navigate to the client directory:
 ```bash
-cd client
+cd /Users/tu/Documents/Codex/2026-10-23/task/X-ai-agent
+python3 -m server plan --config planner.example.json
+python3 -m server status
+python3 -m server dry-run --at 2030-01-02T00:00:00Z
+python3 -m server logs
 ```
 
-2. Install dependencies:
+The example produces three Chinese drafts about sustainable AI learning habits,
+with future scheduling metadata. `--at` advances **only the simulation clock** so
+that the example posts are due. Without `--at`, `dry-run` uses the current UTC time
+and processes only due posts. Every invocation exits; nothing runs in the background.
+The default queue is `.local/planner.sqlite3` (ignored by Git). To keep experiments
+separate, put `--db /path/to/queue.sqlite3` **before** the command:
+
 ```bash
-npm install
-# or
-pnpm install
+python3 -m server --db .local/experiment.sqlite3 plan --config planner.example.json
 ```
 
-3. Configure environment variables (optional - can be done on the interface):
+`python3 server/main.py ...` is an equivalent entry point. There is no HTTP backend
+or FastAPI `app` in this version. Run `python3 -m server --help` for commands.
+
+## Configuration
+
+Copy and edit `planner.example.json`:
+
+| Field | Accepted value |
+| --- | --- |
+| `topic` | 1–120 characters of your own topic |
+| `language` | `en` or `zh` (default `en`) |
+| `style` | `concise`, `practical`, `question` (default `practical`) |
+| `count` | 1–3 drafts (default 3) |
+| `start_at` | ISO 8601 timestamp with offset, e.g. `2030-01-01T09:00:00+08:00`; defaults to now |
+| `interval_minutes` | Integer 1–525600 (default 60) |
+| `provider` | `mock` only |
+
+The mock provider uses deterministic original templates; it does not retrieve or
+copy posts, call an LLM, fact-check claims, or guarantee novel wording. It is meant
+for validating the workflow. Changing language and style changes the templates.
+Unknown configuration fields are rejected, including credentials or live publishing
+settings. All timestamps are stored in UTC. Stored drafts retain their config and
+schedule even if you later edit the JSON file.
+
+## Queue behavior and recovery
+
+- `plan` atomically enqueues validated drafts. A SHA-256 fingerprint of NFKC-normalized,
+  case-folded text with collapsed whitespace prevents duplicates across restarts,
+  schedules and statuses. It does not detect semantic similarity.
+- `dry-run` simulates pending, due drafts in schedule order. Successful items become
+  `simulated`, with a receipt verified against the expected ID, mode, text and hash.
+  The receipt is local test evidence, **not evidence of publication on X**.
+- An error or receipt mismatch marks that item `failed`, persists an error and
+  pauses the entire queue before the next item. Successful earlier items stay
+  simulated; later items remain pending.
+- `pause` and `resume` persist the switch without processing items. `retry ID`
+  returns only a failed item to pending, preserves attempt history and leaves the
+  pause switch unchanged. Inspect `status` and `logs`, then explicitly resume.
+- SQLite serializes writers. A run's results and events commit together; an
+  unexpected exception rolls the batch back. The simulator has no external effects.
+
+Try the failure path with a fresh queue (already simulated items do not run again):
+
 ```bash
-# Copy example env file
-cp .env.example .env
-
-# Then edit the .env file with your values:
-OPENAI_API_KEY=
-BROWSERBASE_API_KEY=
-BROWSERBASE_PROJECT_ID=
-
-NEXT_PUBLIC_BROWSERBASE_API_KEY=
-NEXT_PUBLIC_BROWSERBASE_PROJECT_ID=
-NEXT_PUBLIC_OPENAI_API_KEY=
+python3 -m server --db .local/failure.sqlite3 plan --config planner.example.json
+python3 -m server --db .local/failure.sqlite3 dry-run --at 2030-01-02T00:00:00Z --simulate mismatch
+python3 -m server --db .local/failure.sqlite3 status
+python3 -m server --db .local/failure.sqlite3 retry 1
+python3 -m server --db .local/failure.sqlite3 resume
+python3 -m server --db .local/failure.sqlite3 dry-run --at 2030-01-02T00:00:00Z
 ```
 
-4. Start the development server:
+`--simulate error` tests a simulated adapter failure. Exit codes: `0` completed
+(including no due items), `1` failed simulation or paused queue, `2` invalid input
+or local storage error. Output is JSON. Status, attempts, receipts, errors, pause
+state and event logs survive process restarts. Logs and drafts are local plaintext;
+use your normal file permissions and avoid putting secrets in topics.
+
+## Disabled capabilities
+
+Real posting, login, replies, DMs, likes, cookies, browser context persistence and
+external browser services are disabled. `DisabledPublisher` always raises; no
+configuration or environment variable can enable real publishing. The CLI only
+constructs `Simulator`. The old Python browser helpers fail closed, and all three
+Next.js Browserbase endpoints return HTTP 410 without loading an SDK. The old
+client homepage is replaced with a retirement notice and CLI instructions. Google
+font loading was removed from its layout.
+
+The retained Next.js component tree and lockfiles are upstream reference code;
+this prototype does not use or install them. The client has not been built or
+validated as a supported app. Do not use the old installation/login instructions.
+The historical README is preserved in [docs/UPSTREAM_README.md](docs/UPSTREAM_README.md)
+for attribution and architecture context only. No scheduler, launch agent, cron
+entry, network listener, live deployment or automatic retry is created.
+
+## Tests
+
 ```bash
-npm run dev
-# or
-pnpm dev
+python3 -m unittest discover -s tests -v
 ```
 
-5. The client will be available at http://localhost:3000
+The standard-library suite covers configuration, both languages and all styles,
+timezones and due boundaries, persistent deduplication, verified receipts, errors,
+pause/resume/retry, rollback, CLI exit codes and retired browser paths. Network
+connections are blocked during queue tests. No upstream repository scripts,
+package installers or browser automation are run.
 
-#### Server Setup
+## Architecture and limitations
 
-1. Navigate to the server directory:
-```bash
-cd server
-```
+The source combined a Next.js 15 client with a FastAPI backend that used Browser-use,
+Browserbase and LangChain to log in and reply. After inspecting that path, this
+prototype retains the Python server directory and replaces the execution entry
+point with a dependency-free CLI. `server/planner.py` owns validation, mock generation,
+SQLite persistence and the simulator; `tests/test_planner.py` verifies the workflow.
 
-2. Create and activate a virtual environment using uv:
-```bash
-# Install uv if you don't have it
-pip install uv
+This is a small workflow prototype: no graphical queue editor, real LLM provider,
+real publishing adapter, X character-weight validation, semantic deduplication,
+content review/approval state, migrations or background scheduling. The timestamp
+is metadata for manual dry-runs. Receipts verify only local simulation consistency.
 
-# Create and activate virtual environment
-uv venv
-source .venv/bin/activate  # On Windows, use .venv\Scripts\activate
-```
+## Licenses and attribution
 
-3. Install dependencies with uv (faster):
-```bash
-uv pip install -r requirements.txt
-```
-
-4. Configure environment variables (optional - if you've configured them on the frontend):
-```bash
-# Copy example env file
-cp .env.example .env
-
-# Then edit the .env file with your values:
-BROWSERBASE_API_KEY=your_browserbase_api_key
-OPENAI_API_KEY=your_openai_api_key
-BROWSERBASE_PROJECT_ID=your_browserbase_project_id
-```
-
-5. Start the FastAPI server:
-```bash
-uv run main.py
-```
-
-6. The server will be available at http://localhost:8000
-
-## Usage
-
-1. Open your browser and navigate to http://localhost:3000
-2. Enter your Browserbase API key, project ID and Open AI key
-3. Click "Run Agent" to start a browser automation session
-4. Watch the session recording after task is completed (default task for AI agent is to reply to only 1 tweet - this can be changed)
-5. Customise the agent at [utils.py](server/api/utils.py) in the server's api folder
-
-## API Endpoints
-
-The server provides several API endpoints:
-
-- `POST http://localhost:8000/api/run-agent` - Run an automation agent with specified keys
-- `POST http://localhost:8000/api/login-x` - Run an automation agent to login to X (only needed once at the start)
-- `POST http://localhost:3000/api/session` - Get session recording for session
-- `POST http://localhost:3000/api/live-view` - Get live view url for session (expires after session ends)
-
-
-## Contributing
-
-Contributions are welcome! Please feel free to submit a Pull Request.
-
-1. Fork the repository
-2. Create your feature branch (`git checkout -b feature/amazing-feature`)
-3. Commit your changes (`git commit -m 'Add some amazing feature'`)
-4. Push to the branch (`git push origin feature/amazing-feature`)
-5. Open a Pull Request
-
-## License
-
-This project is licensed under the GPL License - see the LICENSE file for details. Please note the client directory has it's sub license (MIT) from [Agent-UI](https://github.com/agno-agi/agent-ui).
-
-## Acknowledgments
-
-- [Browserbase](https://browserbase.com) for browser infrastructure
-- [Browser-use](https://github.com/browser-use/browser-use) for browser automation with LLMs
-- [Agent-UI](https://github.com/agno-agi/agent-ui) for agent's UI interface
+The original [LICENSE](LICENSE) and [client/LICENSE](client/LICENSE) are unchanged.
+The root notice names Hiresh Bremanand; the client carries Agno's MIT notice.
+The root license heading says “Version 1, 29 March 2025” while its body specifies
+GNU GPL version 3 or later. This fork preserves that upstream wording and does not
+attempt to resolve the inconsistency. New Python prototype code is marked
+GPL-3.0-or-later, following the version stated in the upstream license body.
+See [NOTICE.md](NOTICE.md) for the modification record.

@@ -59,3 +59,10 @@ backup/**/node_modules
 backup/**/*.node
 **/@next/swc-*/**
 **/*.node
+
+# Offline prototype runtime data
+.local/
+__pycache__/
+*.py[cod]
+*.sqlite3
+*.sqlite3-*
